@@ -1,0 +1,500 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum AccountType {
+  OWNER
+  ASSISTANT
+}
+
+enum RoleCode {
+  FARM_OWNER
+  FARM_ASSISTANT
+}
+
+enum MembershipStatus {
+  ACTIVE
+  SUSPENDED
+  REMOVED
+}
+
+enum PermissionEffect {
+  ALLOW
+  DENY
+}
+
+enum SyncOperationType {
+  CREATE
+  UPDATE
+  ARCHIVE
+}
+
+enum SyncStatus {
+  APPLIED
+  CONFLICT
+  REJECTED
+}
+
+enum AnimalOrigin {
+  PURCHASED
+  BORN_ON_FARM
+}
+
+enum AnimalStatus {
+  MILKING
+  DRY
+  PREGNANT
+  SOLD
+  DECEASED
+  OTHER
+}
+
+enum MilkingSession {
+  MORNING
+  EVENING
+}
+
+enum MilkAllocationType {
+  HOME_USE
+  SOLD
+  SPOILED
+}
+
+enum CustomerStatus {
+  ACTIVE
+  PAUSED
+  INACTIVE
+}
+
+enum DeliveryStatus {
+  DELIVERED
+  PENDING
+  CANCELLED
+}
+
+enum PaymentStatus {
+  UNPAID
+  PARTIALLY_PAID
+  PAID
+}
+
+enum PaymentMethod {
+  CASH
+  MPESA
+  BANK
+  OTHER
+}
+
+model User {
+  id              String      @id @default(uuid()) @db.Uuid
+  phone           String      @unique @db.VarChar(20)
+  email           String?     @unique @db.VarChar(255)
+  fullName        String      @map("full_name") @db.VarChar(120)
+  passwordHash    String      @map("password_hash")
+  accountType     AccountType @default(OWNER) @map("account_type")
+  preferredLocale String      @default("en") @map("preferred_locale") @db.VarChar(10)
+  isActive        Boolean     @default(true) @map("is_active")
+  tokenVersion    Int         @default(1) @map("token_version")
+  lastLoginAt     DateTime?   @map("last_login_at") @db.Timestamptz
+  createdAt       DateTime    @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt       DateTime    @updatedAt @map("updated_at") @db.Timestamptz
+
+  refreshTokens         RefreshToken[]
+  createdFarms          Farm[]                     @relation("FarmCreator")
+  memberships           FarmMembership[]           @relation("MemberUser")
+  sentMemberships       FarmMembership[]           @relation("MembershipInviter")
+  sentInvitations       FarmInvitation[]           @relation("InvitationSender")
+  acceptedInvitations   FarmInvitation[]           @relation("InvitationAcceptor")
+  permissionOverrides   FarmMembershipPermission[] @relation("PermissionOverrideUpdater")
+  auditLogs             AuditLog[]                 @relation("AuditActor")
+  syncOperations        SyncOperation[]
+
+  createdAnimals        Animal[]         @relation("AnimalCreator")
+  recordedMilk          MilkProduction[] @relation("MilkRecorder")
+  createdCustomers      Customer[]       @relation("CustomerCreator")
+  recordedDeliveries    MilkDelivery[]   @relation("DeliveryRecorder")
+  recordedPayments      Payment[]        @relation("PaymentRecorder")
+  voidedPayments        Payment[]        @relation("PaymentVoider")
+
+  @@index([phone])
+  @@index([email])
+  @@map("users")
+}
+
+model RefreshToken {
+  id          String    @id @default(uuid()) @db.Uuid
+  userId      String    @map("user_id") @db.Uuid
+  tokenHash   String    @unique @map("token_hash") @db.VarChar(128)
+  familyId    String    @map("family_id") @db.Uuid
+  deviceLabel String?   @map("device_label") @db.VarChar(150)
+  expiresAt   DateTime  @map("expires_at") @db.Timestamptz
+  revokedAt   DateTime? @map("revoked_at") @db.Timestamptz
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([familyId])
+  @@map("refresh_tokens")
+}
+
+model Farm {
+  id                        String    @id @default(uuid()) @db.Uuid
+  name                      String    @db.VarChar(120)
+  location                  String?   @db.VarChar(160)
+  timezone                  String    @default("Africa/Nairobi") @db.VarChar(60)
+  currency                  String    @default("KES") @db.VarChar(10)
+  milkDropAlertThresholdPct Decimal   @default(20.00) @map("milk_drop_alert_threshold_pct") @db.Decimal(5, 2)
+  milkDropBaselineDays      Int       @default(7) @map("milk_drop_baseline_days")
+  createdById               String    @map("created_by_id") @db.Uuid
+  archivedAt                DateTime? @map("archived_at") @db.Timestamptz
+  version                   Int       @default(1)
+  createdAt                 DateTime  @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt                 DateTime  @updatedAt @map("updated_at") @db.Timestamptz
+
+  createdBy          User                @relation("FarmCreator", fields: [createdById], references: [id])
+  memberships        FarmMembership[]
+  invitations        FarmInvitation[]
+  auditLogs          AuditLog[]
+  syncOperations     SyncOperation[]
+  animals            Animal[]
+  milkProductions    MilkProduction[]
+  milkAllocations    MilkAllocation[]
+  customers          Customer[]
+  milkDeliveries     MilkDelivery[]
+  payments           Payment[]
+  paymentAllocations PaymentAllocation[]
+
+  @@index([createdById])
+  @@index([archivedAt])
+  @@map("farms")
+}
+
+model Role {
+  id          String   @id @default(uuid()) @db.Uuid
+  code        RoleCode @unique
+  name        String   @db.VarChar(80)
+  description String?  @db.VarChar(255)
+  isSystem    Boolean  @default(true) @map("is_system")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  rolePermissions RolePermission[]
+  memberships     FarmMembership[]
+  invitations     FarmInvitation[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id                      String   @id @default(uuid()) @db.Uuid
+  key                     String   @unique @db.VarChar(80)
+  module                  String   @db.VarChar(40)
+  description             String   @db.VarChar(255)
+  isAssistantConfigurable Boolean  @default(false) @map("is_assistant_configurable")
+  createdAt               DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  rolePermissions     RolePermission[]
+  membershipOverrides FarmMembershipPermission[]
+
+  @@index([module])
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String @map("role_id") @db.Uuid
+  permissionId String @map("permission_id") @db.Uuid
+
+  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model FarmMembership {
+  id          String           @id @default(uuid()) @db.Uuid
+  farmId      String           @map("farm_id") @db.Uuid
+  userId      String           @map("user_id") @db.Uuid
+  roleId      String           @map("role_id") @db.Uuid
+  status      MembershipStatus @default(ACTIVE)
+  invitedById String?          @map("invited_by_id") @db.Uuid
+  joinedAt    DateTime         @default(now()) @map("joined_at") @db.Timestamptz
+  updatedAt   DateTime         @updatedAt @map("updated_at") @db.Timestamptz
+
+  farm                Farm                       @relation(fields: [farmId], references: [id], onDelete: Cascade)
+  user                User                       @relation("MemberUser", fields: [userId], references: [id], onDelete: Cascade)
+  role                Role                       @relation(fields: [roleId], references: [id])
+  invitedBy           User?                      @relation("MembershipInviter", fields: [invitedById], references: [id])
+  permissionOverrides FarmMembershipPermission[]
+
+  @@unique([farmId, userId])
+  @@index([farmId, status])
+  @@index([userId, status])
+  @@map("farm_memberships")
+}
+
+model FarmMembershipPermission {
+  id           String           @id @default(uuid()) @db.Uuid
+  membershipId String           @map("membership_id") @db.Uuid
+  permissionId String           @map("permission_id") @db.Uuid
+  effect       PermissionEffect
+  updatedById  String?          @map("updated_by_id") @db.Uuid
+  updatedAt    DateTime         @updatedAt @map("updated_at") @db.Timestamptz
+
+  membership FarmMembership @relation(fields: [membershipId], references: [id], onDelete: Cascade)
+  permission Permission     @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+  updatedBy  User?          @relation("PermissionOverrideUpdater", fields: [updatedById], references: [id])
+
+  @@unique([membershipId, permissionId])
+  @@map("farm_membership_permissions")
+}
+
+model FarmInvitation {
+  id                 String    @id @default(uuid()) @db.Uuid
+  farmId             String    @map("farm_id") @db.Uuid
+  roleId             String    @map("role_id") @db.Uuid
+  invitedById        String    @map("invited_by_id") @db.Uuid
+  inviteeName        String?   @map("invitee_name") @db.VarChar(120)
+  phone              String    @db.VarChar(20)
+  codeHash           String    @unique @map("code_hash") @db.VarChar(128)
+  grantedPermissions Json      @default("[]") @map("granted_permissions")
+  expiresAt          DateTime  @map("expires_at") @db.Timestamptz
+  acceptedAt         DateTime? @map("accepted_at") @db.Timestamptz
+  acceptedByUserId   String?   @map("accepted_by_user_id") @db.Uuid
+  revokedAt          DateTime? @map("revoked_at") @db.Timestamptz
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz
+
+  farm       Farm  @relation(fields: [farmId], references: [id], onDelete: Cascade)
+  role       Role  @relation(fields: [roleId], references: [id])
+  invitedBy  User  @relation("InvitationSender", fields: [invitedById], references: [id])
+  acceptedBy User? @relation("InvitationAcceptor", fields: [acceptedByUserId], references: [id])
+
+  @@index([farmId, phone])
+  @@index([phone, expiresAt])
+  @@map("farm_invitations")
+}
+
+model Animal {
+  id               String       @id @default(uuid()) @db.Uuid
+  farmId           String       @map("farm_id") @db.Uuid
+  name             String       @db.VarChar(100)
+  tagNumber        String       @map("tag_number") @db.VarChar(50)
+  breed            String       @db.VarChar(80)
+  dateOfBirth      DateTime?    @map("date_of_birth") @db.Date
+  photoUrl         String?      @map("photo_url") @db.VarChar(500)
+  origin           AnimalOrigin @default(PURCHASED)
+  acquiredDate     DateTime?    @map("acquired_date") @db.Date
+  purchasePriceKes Decimal?     @map("purchase_price_kes") @db.Decimal(12, 2)
+  status           AnimalStatus @default(MILKING)
+  notes            String?      @db.VarChar(500)
+  createdById      String       @map("created_by_id") @db.Uuid
+  archivedAt       DateTime?    @map("archived_at") @db.Timestamptz
+  version          Int          @default(1)
+  createdAt        DateTime     @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime     @updatedAt @map("updated_at") @db.Timestamptz
+
+  farm            Farm             @relation(fields: [farmId], references: [id], onDelete: Cascade)
+  createdBy       User             @relation("AnimalCreator", fields: [createdById], references: [id])
+  milkProductions MilkProduction[]
+
+  @@unique([farmId, tagNumber])
+  @@index([farmId, status, archivedAt])
+  @@map("animals")
+}
+
+model MilkProduction {
+  id               String         @id @default(uuid()) @db.Uuid
+  farmId           String         @map("farm_id") @db.Uuid
+  animalId         String         @map("animal_id") @db.Uuid
+  recordDate       DateTime       @map("record_date") @db.Date
+  session          MilkingSession
+  quantityLitres   Decimal        @map("quantity_litres") @db.Decimal(8, 2)
+  homeUseLitres    Decimal        @default(0.00) @map("home_use_litres") @db.Decimal(8, 2)
+  soldLitres       Decimal        @default(0.00) @map("sold_litres") @db.Decimal(8, 2)
+  spoiledLitres    Decimal        @default(0.00) @map("spoiled_litres") @db.Decimal(8, 2)
+  isWithheld       Boolean        @default(false) @map("is_withheld")
+  notes            String?        @db.VarChar(500)
+  recordedById     String         @map("recorded_by_id") @db.Uuid
+  isSuperseded     Boolean        @default(false) @map("is_superseded")
+  supersededById   String?        @unique @map("superseded_by_id") @db.Uuid
+  correctionReason String?        @map("correction_reason") @db.VarChar(255)
+  version          Int            @default(1)
+  createdAt        DateTime       @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt        DateTime       @updatedAt @map("updated_at") @db.Timestamptz
+
+  farm         Farm             @relation(fields: [farmId], references: [id], onDelete: Cascade)
+  animal       Animal           @relation(fields: [animalId], references: [id], onDelete: Cascade)
+  recordedBy   User             @relation("MilkRecorder", fields: [recordedById], references: [id])
+  supersededBy MilkProduction?  @relation("MilkCorrection", fields: [supersededById], references: [id])
+  supersedes   MilkProduction?  @relation("MilkCorrection")
+  allocations  MilkAllocation[]
+
+  @@index([farmId, recordDate, isSuperseded])
+  @@index([farmId, animalId, recordDate, session, isSuperseded])
+  @@map("milk_productions")
+}
+
+model MilkAllocation {
+  id               String             @id @default(uuid()) @db.Uuid
+  farmId           String             @map("farm_id") @db.Uuid
+  milkProductionId String             @map("milk_production_id") @db.Uuid
+  allocationType   MilkAllocationType @map("allocation_type")
+  quantityLitres   Decimal            @map("quantity_litres") @db.Decimal(8, 2)
+  notes            String?            @db.VarChar(255)
+  createdAt        DateTime           @default(now()) @map("created_at") @db.Timestamptz
+
+  farm           Farm           @relation(fields: [farmId], references: [id], onDelete: Cascade)
+  milkProduction MilkProduction @relation(fields: [milkProductionId], references: [id], onDelete: Cascade)
+
+  @@index([farmId, milkProductionId])
+  @@map("milk_allocations")
+}
+
+model Customer {
+  id                  String         @id @default(uuid()) @db.Uuid
+  farmId              String         @map("farm_id") @db.Uuid
+  name                String         @db.VarChar(120)
+  phone               String         @db.VarChar(20)
+  location            String?        @db.VarChar(160)
+  agreedPricePerLitre Decimal        @map("agreed_price_per_litre") @db.Decimal(10, 2)
+  expectedDailyLitres Decimal        @default(0.00) @map("expected_daily_litres") @db.Decimal(8, 2)
+  agreementNotes      String?        @map("agreement_notes") @db.VarChar(500)
+  status              CustomerStatus @default(ACTIVE)
+  createdById         String         @map("created_by_id") @db.Uuid
+  archivedAt          DateTime?      @map("archived_at") @db.Timestamptz
+  version             Int            @default(1)
+  createdAt           DateTime       @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt           DateTime       @updatedAt @map("updated_at") @db.Timestamptz
+
+  farm       Farm           @relation(fields: [farmId], references: [id], onDelete: Cascade)
+  createdBy  User           @relation("CustomerCreator", fields: [createdById], references: [id])
+  deliveries MilkDelivery[]
+  payments   Payment[]
+
+  @@index([farmId, status, archivedAt])
+  @@index([farmId, phone])
+  @@map("customers")
+}
+
+model MilkDelivery {
+  id             String         @id @default(uuid()) @db.Uuid
+  farmId         String         @map("farm_id") @db.Uuid
+  customerId     String         @map("customer_id") @db.Uuid
+  deliveryDate   DateTime       @map("delivery_date") @db.Date
+  quantityLitres Decimal        @map("quantity_litres") @db.Decimal(8, 2)
+  unitPriceKes   Decimal        @map("unit_price_kes") @db.Decimal(10, 2)
+  totalAmountKes Decimal        @map("total_amount_kes") @db.Decimal(12, 2)
+  paidAmountKes  Decimal        @default(0.00) @map("paid_amount_kes") @db.Decimal(12, 2)
+  deliveryStatus DeliveryStatus @default(DELIVERED) @map("delivery_status")
+  paymentStatus  PaymentStatus  @default(UNPAID) @map("payment_status")
+  notes          String?        @db.VarChar(500)
+  recordedById   String         @map("recorded_by_id") @db.Uuid
+  version        Int            @default(1)
+  createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt      DateTime       @updatedAt @map("updated_at") @db.Timestamptz
+
+  farm               Farm                @relation(fields: [farmId], references: [id], onDelete: Cascade)
+  customer           Customer            @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  recordedBy         User                @relation("DeliveryRecorder", fields: [recordedById], references: [id])
+  paymentAllocations PaymentAllocation[]
+
+  @@index([farmId, deliveryDate])
+  @@index([farmId, customerId, deliveryDate])
+  @@index([farmId, customerId, paymentStatus])
+  @@map("milk_deliveries")
+}
+
+model Payment {
+  id            String        @id @default(uuid()) @db.Uuid
+  farmId        String        @map("farm_id") @db.Uuid
+  customerId    String        @map("customer_id") @db.Uuid
+  paymentDate   DateTime      @map("payment_date") @db.Date
+  amountKes     Decimal       @map("amount_kes") @db.Decimal(12, 2)
+  method        PaymentMethod @default(CASH)
+  referenceCode String?       @map("reference_code") @db.VarChar(80)
+  notes         String?       @db.VarChar(500)
+  recordedById  String        @map("recorded_by_id") @db.Uuid
+  isVoided      Boolean       @default(false) @map("is_voided")
+  voidedById    String?       @map("voided_by_id") @db.Uuid
+  voidReason    String?       @map("void_reason") @db.VarChar(255)
+  voidedAt      DateTime?     @map("voided_at") @db.Timestamptz
+  version       Int           @default(1)
+  createdAt     DateTime      @default(now()) @map("created_at") @db.Timestamptz
+
+  farm        Farm                @relation(fields: [farmId], references: [id], onDelete: Cascade)
+  customer    Customer            @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  recordedBy  User                @relation("PaymentRecorder", fields: [recordedById], references: [id])
+  voidedBy    User?               @relation("PaymentVoider", fields: [voidedById], references: [id])
+  allocations PaymentAllocation[]
+
+  @@index([farmId, paymentDate])
+  @@index([farmId, customerId, isVoided])
+  @@map("payments")
+}
+
+model PaymentAllocation {
+  id                 String   @id @default(uuid()) @db.Uuid
+  farmId             String   @map("farm_id") @db.Uuid
+  paymentId          String   @map("payment_id") @db.Uuid
+  milkDeliveryId     String   @map("milk_delivery_id") @db.Uuid
+  allocatedAmountKes Decimal  @map("allocated_amount_kes") @db.Decimal(12, 2)
+  createdAt          DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  farm         Farm         @relation(fields: [farmId], references: [id], onDelete: Cascade)
+  payment      Payment      @relation(fields: [paymentId], references: [id], onDelete: Cascade)
+  milkDelivery MilkDelivery @relation(fields: [milkDeliveryId], references: [id], onDelete: Cascade)
+
+  @@index([farmId, paymentId])
+  @@index([farmId, milkDeliveryId])
+  @@map("payment_allocations")
+}
+
+model AuditLog {
+  id          String   @id @default(uuid()) @db.Uuid
+  farmId      String?  @map("farm_id") @db.Uuid
+  actorUserId String?  @map("actor_user_id") @db.Uuid
+  action      String   @db.VarChar(100)
+  entityType  String   @map("entity_type") @db.VarChar(60)
+  entityId    String?  @map("entity_id") @db.VarChar(64)
+  beforeData  Json?    @map("before_data")
+  afterData   Json?    @map("after_data")
+  metadata    Json?
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  farm  Farm? @relation(fields: [farmId], references: [id], onDelete: SetNull)
+  actor User? @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  @@index([farmId, createdAt(sort: Desc)])
+  @@index([actorUserId, createdAt(sort: Desc)])
+  @@index([entityType, entityId])
+  @@map("audit_logs")
+}
+
+model SyncOperation {
+  id               String            @id @default(uuid()) @db.Uuid
+  farmId           String            @map("farm_id") @db.Uuid
+  userId           String            @map("user_id") @db.Uuid
+  deviceId         String            @map("device_id") @db.VarChar(100)
+  clientMutationId String            @map("client_mutation_id") @db.VarChar(100)
+  entityType       String            @map("entity_type") @db.VarChar(60)
+  entityId         String            @map("entity_id") @db.Uuid
+  operation        SyncOperationType
+  status           SyncStatus
+  payload          Json
+  conflictDetails  Json?             @map("conflict_details")
+  processedAt      DateTime          @default(now()) @map("processed_at") @db.Timestamptz
+
+  farm Farm @relation(fields: [farmId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([farmId, clientMutationId])
+  @@index([farmId, status])
+  @@index([farmId, entityType, entityId])
+  @@map("sync_operations")
+}
